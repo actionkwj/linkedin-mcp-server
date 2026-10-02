@@ -1089,7 +1089,21 @@ def _normalize_profile_urn(value: str | None) -> str | None:
 
 def _profile_path_from_url(value: str) -> str | None:
     parsed = _safe_linkedin_url(value)
-    if parsed is None or parsed.query or not _PROFILE_PATH_RE.fullmatch(parsed.path):
+    if parsed is None:
+        return None
+    if parsed.query:
+        # LinkedIn appends ?isSelfProfile=<bool> client-side to profile URLs
+        # (stickerdaniel/linkedin-mcp-server#1181). Tolerate that one benign
+        # query only; any other query keeps the URL rejected.
+        params = parse_qs(parsed.query, keep_blank_values=True)
+        if set(params) != {"isSelfProfile"} or params["isSelfProfile"] not in (
+            ["true"],
+            ["false"],
+        ):
+            return None
+        parsed = parsed._replace(query="")
+        value = parsed.geturl()
+    if not _PROFILE_PATH_RE.fullmatch(parsed.path):
         return None
     try:
         username = normalize_person_identifier(value)
