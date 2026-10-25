@@ -82,20 +82,35 @@ _PROFILE_MESSAGE_TARGET_JS = r"""() => {
     const main = document.querySelector('main');
     if (!main) return {status: 'unresolved'};
 
-    // The top card is the first section that wraps no other section. LinkedIn
-    // nests it inside a wrapper section and has moved the name between h1 and
-    // h2, so neither its depth nor its heading level is pinned. It is chosen
-    // before its heading is checked, so a card whose name has not rendered yet
-    // stays unresolved instead of yielding to the next section. Sidebar
-    // sections are skipped: they carry other people's Message links.
+    // A section's own content is what no nested section owns: headings and
+    // compose links count for the innermost section that contains them.
+    const owns = (section, element) => element.closest('section') === section;
+    const hasOwnContent = section =>
+        Array.from(section.querySelectorAll('h1, h2, h3, a[href*="/messaging/compose/"]'))
+            .some(element => owns(section, element));
+
+    // The top card is the first section that wraps no other section, or that
+    // wraps one but carries a heading or compose link of its own. LinkedIn
+    // nests it inside a wrapper section (which owns neither) and has moved the
+    // name between h1 and h2, so neither its depth nor its heading level is
+    // pinned. Profiles showing "Open to volunteer for these causes" nest that
+    // banner as a section inside the top card, so wrapping a section alone
+    // does not disqualify it. It is chosen before its heading is checked, so
+    // a card whose name has not rendered yet stays unresolved instead of
+    // yielding to the next section. Sidebar sections are skipped: they carry
+    // other people's Message links.
     const section = Array.from(main.querySelectorAll('section')).find(
         element =>
             visible(element) &&
             !element.closest('aside') &&
-            !element.querySelector('section')
+            (!element.querySelector('section') || hasOwnContent(element))
     );
     if (!section) return {status: 'unresolved'};
-    const headings = Array.from(section.querySelectorAll('h1, h2, h3')).filter(visible);
+    // Only the card's own headings count: a nested banner's heading is not
+    // the name, and the one-heading check below still fails closed on two.
+    const headings = Array.from(section.querySelectorAll('h1, h2, h3')).filter(
+        element => visible(element) && owns(section, element)
+    );
     const visibleComposeAnchors = Array.from(
         section.querySelectorAll('a[href*="/messaging/compose/"]')
     ).filter(anchor => visible(anchor) && anchor.closest('section') === section);

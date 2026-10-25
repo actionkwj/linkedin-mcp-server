@@ -286,6 +286,135 @@ class TestProfileMessageTargetDom:
         assert result["displayName"] == "Test User"
         assert result["composeHrefs"] == ["/messaging/compose/?recipient=ACoAAB"]
 
+    async def test_resolves_plain_top_card_with_no_nested_section(self, dom_page):
+        await _set_composer_content(
+            dom_page,
+            self._nested_page(
+                """<div><a href="/in/testuser/"><h2>Test User</h2></a></div>
+                <div><a href="/messaging/compose/?recipient=ACoAAB">Message</a></div>"""
+            ),
+        )
+
+        result = await dom_page.evaluate(_PROFILE_MESSAGE_TARGET_JS)
+
+        assert result["status"] == "resolved"
+        assert result["displayName"] == "Test User"
+        assert result["composeHrefs"] == ["/messaging/compose/?recipient=ACoAAB"]
+
+    # Profiles that show "Open to volunteer for these causes" (measured live on
+    # 2026-10-24): LinkedIn renders the banner as a <section> nested inside the
+    # real top card, so the top card is no longer a leaf. The card still owns
+    # the name heading and the Message links; the banner owns neither.
+    @staticmethod
+    def _volunteer_banner(inner: str = "<p>Open to volunteer for these causes</p>"):
+        return f"<section>{inner}</section>"
+
+    @pytest.mark.parametrize(
+        "banner",
+        [
+            "<p>Open to volunteer for these causes</p>",
+            "<h2>Open to volunteer for these causes</h2><p>Animal welfare</p>",
+        ],
+        ids=["headingless-banner", "banner-with-heading"],
+    )
+    async def test_resolves_top_card_wrapping_a_nested_banner(self, dom_page, banner):
+        await _set_composer_content(
+            dom_page,
+            self._nested_page(
+                f"""<div><a href="/in/testuser/"><h2>Test User</h2></a></div>
+                <div><a href="/messaging/compose/?recipient=ACoAAB">Message</a></div>
+                <div style="display:none">
+                  <a href="/messaging/compose/?recipient=ACoAAB">Message</a>
+                </div>
+                {self._volunteer_banner(banner)}"""
+            ),
+        )
+
+        result = await dom_page.evaluate(_PROFILE_MESSAGE_TARGET_JS)
+
+        assert result["status"] == "resolved"
+        assert result["displayName"] == "Test User"
+        assert result["composeHrefs"] == ["/messaging/compose/?recipient=ACoAAB"]
+
+    async def test_banner_nested_before_the_name_still_resolves_the_card(
+        self, dom_page
+    ):
+        await _set_composer_content(
+            dom_page,
+            self._nested_page(
+                f"""{self._volunteer_banner()}
+                <div><a href="/in/testuser/"><h2>Test User</h2></a></div>
+                <div><a href="/messaging/compose/?recipient=ACoAAB">Message</a></div>"""
+            ),
+        )
+
+        result = await dom_page.evaluate(_PROFILE_MESSAGE_TARGET_JS)
+
+        assert result["status"] == "resolved"
+        assert result["displayName"] == "Test User"
+
+    async def test_compose_link_inside_nested_banner_is_never_the_target(
+        self, dom_page
+    ):
+        await _set_composer_content(
+            dom_page,
+            self._nested_page(
+                f"""<div><a href="/in/testuser/"><h2>Test User</h2></a></div>
+                <div><a href="/messaging/compose/?recipient=ACoAAB">Message</a></div>
+                {
+                    self._volunteer_banner(
+                        '<a href="/messaging/compose/?recipient=OTHER">Message</a>'
+                    )
+                }"""
+            ),
+        )
+
+        result = await dom_page.evaluate(_PROFILE_MESSAGE_TARGET_JS)
+
+        assert result["status"] == "resolved"
+        assert result["composeHrefs"] == ["/messaging/compose/?recipient=ACoAAB"]
+
+    async def test_banner_nested_in_card_without_message_is_unavailable(self, dom_page):
+        await _set_composer_content(
+            dom_page,
+            self._nested_page(
+                f"<h2>Test User</h2><button>Follow</button>{self._volunteer_banner()}"
+            ),
+        )
+
+        result = await dom_page.evaluate(_PROFILE_MESSAGE_TARGET_JS)
+
+        assert result["status"] == "unavailable"
+
+    async def test_banner_nested_in_card_without_its_name_yet_is_unresolved(
+        self, dom_page
+    ):
+        await _set_composer_content(
+            dom_page,
+            self._nested_page(
+                f"""<div><a href="/messaging/compose/?recipient=ACoAAB">Message</a></div>
+                {self._volunteer_banner("<h2>Open to volunteer</h2>")}"""
+            ),
+        )
+
+        result = await dom_page.evaluate(_PROFILE_MESSAGE_TARGET_JS)
+
+        assert result == {"status": "unresolved"}
+
+    async def test_nested_banner_never_hides_a_second_name_heading(self, dom_page):
+        await _set_composer_content(
+            dom_page,
+            self._nested_page(
+                f"""<h2>Test User</h2><h3>Other User</h3>
+                <a href="/messaging/compose/?recipient=ACoAAB">Message</a>
+                {self._volunteer_banner()}"""
+            ),
+        )
+
+        result = await dom_page.evaluate(_PROFILE_MESSAGE_TARGET_JS)
+
+        assert result == {"status": "unresolved"}
+
     async def test_nested_top_card_without_message_is_unavailable(self, dom_page):
         await _set_composer_content(
             dom_page, self._nested_page("<h2>Test User</h2><button>Follow</button>")
